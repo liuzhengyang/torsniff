@@ -16,6 +16,8 @@ import (
 
 	"github.com/marksamman/bencode"
 	"github.com/spf13/cobra"
+	"github.com/confluentinc/confluent-kafka-go/kafka"
+	"encoding/json"
 )
 
 const (
@@ -33,25 +35,25 @@ func homeDir() string {
 }
 
 type tfile struct {
-	name   string
+	path   string
 	length int64
 }
 
 func (t *tfile) String() string {
-	return fmt.Sprintf("name: %s\n, size: %d\n", t.name, t.length)
+	return fmt.Sprintf("name: %s\n, size: %d\n", t.path, t.length)
 }
 
 type torrent struct {
-	infohashHex string
-	name        string
-	length      int64
-	files       []*tfile
+	infoHash string
+	name     string
+	length   int64
+	files    []*tfile
 }
 
 func (t *torrent) String() string {
 	return fmt.Sprintf(
 		"link: %s\nname: %s\nsize: %d\nfile: %d\n",
-		fmt.Sprintf("magnet:?xt=urn:btih:%s", t.infohashHex),
+		fmt.Sprintf("magnet:?xt=urn:btih:%s", t.infoHash),
 		t.name,
 		t.length,
 		len(t.files),
@@ -63,7 +65,7 @@ func newTorrent(meta []byte, infohashHex string) (*torrent, error) {
 	if err != nil {
 		return nil, err
 	}
-	t := &torrent{infohashHex: infohashHex}
+	t := &torrent{infoHash: infohashHex}
 	if name, ok := dict["name.utf-8"].(string); ok {
 		t.name = name
 	} else if name, ok := dict["name"].(string); ok {
@@ -93,7 +95,7 @@ func newTorrent(meta []byte, infohashHex string) (*torrent, error) {
 			filelength = length
 			totalSize += filelength
 		}
-		t.files = append(t.files, &tfile{name: filename, length: filelength})
+		t.files = append(t.files, &tfile{path: filename, length: filelength})
 	}
 	if files, ok := dict["files"].([]interface{}); ok {
 		for _, file := range files {
@@ -106,7 +108,7 @@ func newTorrent(meta []byte, infohashHex string) (*torrent, error) {
 		t.length = totalSize
 	}
 	if len(t.files) == 0 {
-		t.files = append(t.files, &tfile{name: t.name, length: t.length})
+		t.files = append(t.files, &tfile{path: t.name, length: t.length})
 	}
 	return t, nil
 }
@@ -169,14 +171,30 @@ func (t *torsniff) run() {
 	if err != nil {
 		panic(err)
 	}
+	p, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": "192.168.199.170:9092"})
+	if err != nil {
+		panic(err.Error())
+	}
+	go func() {
+		for e := range p.Events() {
+			switch ev := e.(type) {
+			case *kafka.Message:
+				if ev.TopicPartition.Error != nil {
+					fmt.Printf("Delivery failed: %v\n", ev.TopicPartition)
+				} else {
+					fmt.Printf("Delivered message to %v\n", ev.TopicPartition)
+				}
+			}
+		}
+	}()
 	log.Println("running, it may take a few minutes...")
 	for ac := range dht.chAnnouncement {
 		tokens <- struct{}{}
-		go t.work(ac, tokens)
+		go t.work(ac, tokens, p)
 	}
 }
 
-func (t *torsniff) work(ac *announcement, tokens chan struct{}) {
+func (t *torsniff) work(ac *announcement, tokens chan struct{}, producer *kafka.Producer) {
 	defer func() {
 		<-tokens
 	}()
@@ -193,15 +211,26 @@ func (t *torsniff) work(ac *announcement, tokens chan struct{}) {
 		t.blacklist.add(ac.peer)
 		return
 	}
-	_, err = t.saveTorrent(ac.infohashHex, data)
-	if err != nil {
-		return
-	}
+	t.saveTorrent(ac.infohashHex, data)
 	torrent, err := newTorrent(data, ac.infohashHex)
 	if err != nil {
 		return
 	}
 	log.Println(torrent)
+	sendLog(torrent, producer)
+}
+
+func sendLog(t *torrent, p *kafka.Producer) () {
+	topic := "dht_infohash_torsniff"
+	data, err := json.Marshal(t)
+	if err != nil {
+		panic(err.Error())
+	}
+	p.Produce(&kafka.Message{
+		TopicPartition:kafka.TopicPartition{Topic:&topic, Partition: kafka.PartitionAny},
+		Value: data,
+	}, nil)
+	p.Flush(1000)
 }
 
 func (t *torsniff) isTorrentExist(infohashHex string) bool {
@@ -213,27 +242,8 @@ func (t *torsniff) isTorrentExist(infohashHex string) bool {
 	return err == nil
 }
 
-func (t *torsniff) saveTorrent(infohashHex string, data []byte) (string, error) {
-	name, dir := t.torrentPath(infohashHex)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", err
-	}
-	f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE, 0755)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	d, err := bencode.Decode(bytes.NewBuffer(data))
-	if err != nil {
-		return "", err
-	}
-	_, err = f.Write(bencode.Encode(map[string]interface{}{
-		"info": d,
-	}))
-	if err != nil {
-		return "", err
-	}
-	return name, nil
+func (t *torsniff) saveTorrent(infohashHex string, data []byte) () {
+	log.Printf("Save Path %s", infohashHex)
 }
 
 func (t *torsniff) torrentPath(infohashHex string) (name string, dir string) {
