@@ -35,28 +35,28 @@ func homeDir() string {
 }
 
 type tfile struct {
-	path   string
-	length int64
+	Path   string `json:"path"`
+	Length int64 `json:"length"`
 }
 
 func (t *tfile) String() string {
-	return fmt.Sprintf("name: %s\n, size: %d\n", t.path, t.length)
+	return fmt.Sprintf("name: %s\n, size: %d\n", t.Path, t.Length)
 }
 
 type torrent struct {
-	infoHash string
-	name     string
-	length   int64
-	files    []*tfile
+	InfoHash string   `json:"infohash"`
+	Name     string   `json:"name"`
+	Length   int64    `json:"length,omitempty"`
+	Files    []*tfile `json:"files,omitempty"`
 }
 
 func (t *torrent) String() string {
 	return fmt.Sprintf(
 		"link: %s\nname: %s\nsize: %d\nfile: %d\n",
-		fmt.Sprintf("magnet:?xt=urn:btih:%s", t.infoHash),
-		t.name,
-		t.length,
-		len(t.files),
+		fmt.Sprintf("magnet:?xt=urn:btih:%s", t.InfoHash),
+		t.Name,
+		t.Length,
+		len(t.Files),
 	)
 }
 
@@ -65,14 +65,14 @@ func newTorrent(meta []byte, infohashHex string) (*torrent, error) {
 	if err != nil {
 		return nil, err
 	}
-	t := &torrent{infoHash: infohashHex}
+	t := &torrent{InfoHash: infohashHex}
 	if name, ok := dict["name.utf-8"].(string); ok {
-		t.name = name
+		t.Name = name
 	} else if name, ok := dict["name"].(string); ok {
-		t.name = name
+		t.Name = name
 	}
 	if length, ok := dict["length"].(int64); ok {
-		t.length = length
+		t.Length = length
 	}
 	var totalSize int64
 	var extractFiles = func(file map[string]interface{}) {
@@ -95,7 +95,7 @@ func newTorrent(meta []byte, infohashHex string) (*torrent, error) {
 			filelength = length
 			totalSize += filelength
 		}
-		t.files = append(t.files, &tfile{path: filename, length: filelength})
+		t.Files = append(t.Files, &tfile{Path: filename, Length: filelength})
 	}
 	if files, ok := dict["files"].([]interface{}); ok {
 		for _, file := range files {
@@ -104,11 +104,11 @@ func newTorrent(meta []byte, infohashHex string) (*torrent, error) {
 			}
 		}
 	}
-	if t.length == 0 {
-		t.length = totalSize
+	if t.Length == 0 {
+		t.Length = totalSize
 	}
-	if len(t.files) == 0 {
-		t.files = append(t.files, &tfile{path: t.name, length: t.length})
+	if len(t.Files) == 0 {
+		t.Files = append(t.Files, &tfile{Path: t.Name, Length: t.Length})
 	}
 	return t, nil
 }
@@ -171,7 +171,7 @@ func (t *torsniff) run() {
 	if err != nil {
 		panic(err)
 	}
-	p, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": "192.168.199.170:9092"})
+	p, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": "144.34.135.168:9092"})
 	if err != nil {
 		panic(err.Error())
 	}
@@ -180,9 +180,9 @@ func (t *torsniff) run() {
 			switch ev := e.(type) {
 			case *kafka.Message:
 				if ev.TopicPartition.Error != nil {
-					fmt.Printf("Delivery failed: %v\n", ev.TopicPartition)
+					log.Printf("Delivery failed: %v\n", ev.TopicPartition)
 				} else {
-					fmt.Printf("Delivered message to %v\n", ev.TopicPartition)
+					log.Printf("Delivered message to %v\n", ev.TopicPartition)
 				}
 			}
 		}
@@ -226,6 +226,7 @@ func sendLog(t *torrent, p *kafka.Producer) () {
 	if err != nil {
 		panic(err.Error())
 	}
+	log.Printf("%s\n\n", data)
 	p.Produce(&kafka.Message{
 		TopicPartition:kafka.TopicPartition{Topic:&topic, Partition: kafka.PartitionAny},
 		Value: data,
