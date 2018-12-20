@@ -13,6 +13,8 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/marksamman/bencode"
+	"fmt"
+	"github.com/jasonlvhit/gocron"
 )
 
 var seed = []string{
@@ -124,7 +126,14 @@ func newDHT(laddr string) (*dht, error) {
 	go g.listen()
 	go g.join()
 	go g.makefriends()
+	go gocron.Every(10).Minute().Do(func() {g.changeLocalId()})
+	<- gocron.Start()
 	return g, nil
+}
+
+func (g *dht) changeLocalId() {
+	g.localID = randBytes(20)
+	fmt.Printf("After changed %v\n", g.localID)
 }
 
 func (g *dht) listen() error {
@@ -268,6 +277,7 @@ func (g *dht) send(dict map[string]interface{}, to net.UDPAddr) error {
 }
 
 func (g *dht) makefriends() {
+	fmt.Printf("MyLocalId %v", g.localID)
 	for {
 		node := <-g.chNode
 		g.findNode(node.addr, []byte(node.id))

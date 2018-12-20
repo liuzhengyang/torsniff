@@ -39,16 +39,18 @@ type tfile struct {
 	Length int64 `json:"length"`
 }
 
+type torrent struct {
+	InfoHash string   `json:"infohash"`
+	Name     string   `json:"name"`
+	Files    []*tfile `json:"files,omitempty"`
+	Length   int64    `json:"length,omitempty"`
+}
+
 func (t *tfile) String() string {
 	return fmt.Sprintf("name: %s\n, size: %d\n", t.Path, t.Length)
 }
 
-type torrent struct {
-	InfoHash string   `json:"infohash"`
-	Name     string   `json:"name"`
-	Length   int64    `json:"length,omitempty"`
-	Files    []*tfile `json:"files,omitempty"`
-}
+
 
 func (t *torrent) String() string {
 	return fmt.Sprintf(
@@ -192,6 +194,10 @@ func (t *torsniff) run() {
 		tokens <- struct{}{}
 		go t.work(ac, tokens, p)
 	}
+}
+
+func (t *torsniff) stop() {
+
 }
 
 func (t *torsniff) work(ac *announcement, tokens chan struct{}, producer *kafka.Producer) {
