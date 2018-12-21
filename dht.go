@@ -126,7 +126,7 @@ func newDHT(laddr string) (*dht, error) {
 	go g.listen()
 	go g.join()
 	go g.makefriends()
-	go gocron.Every(10).Minutes().Do(func() {g.changeLocalId()})
+	go gocron.Every(30).Minutes().Do(func() {g.changeLocalId()})
 	go gocron.Start()
 	return g, nil
 }
